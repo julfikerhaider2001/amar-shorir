@@ -1,98 +1,95 @@
-# vinext-starter
+# আমার শরীর — Bangla 3D body explorer for kids
 
-A clean full-stack starter running on
-[vinext](https://github.com/cloudflare/vinext), with optional Cloudflare D1 and
-Drizzle support.
+An interactive 3D anatomy app for children aged about 4–10, entirely in Bangla.
+Tap an organ to hear its name and a fun fact read aloud; tap the coloured dots
+on the 3D model to hear about each part.
 
-## Prerequisites
+Live: https://thebuggeddev.github.io/anatomy/
 
-- Node.js `>=22.13.0`
+## Run it
 
-## Quick Start
+Requires Node.js ≥ 22.13.
 
 ```bash
 npm install
-npm run dev
-npm run build
+npm run dev:next        # http://localhost:3000 (plain Next.js dev server)
+npm run preview         # build the GitHub Pages version and serve it at http://localhost:4173/anatomy/
 ```
 
-This starter does not use `wrangler.jsonc`.
+`npm run dev` / `npm run build` still use vinext (the original Cloudflare target).
 
-## Included Shape
+## Edit the Bangla text
 
-- edit site code under `app/`
-- `.openai/hosting.json` declares optional Sites D1 and R2 bindings
-- `vite.config.ts` simulates declared bindings for local development
-- `db/schema.ts` starts intentionally empty
-- `examples/d1/` contains an optional D1 example surface
-- `drizzle.config.ts` supports local migration generation when needed
+**All** user-facing text lives in one file: [`app/i18n/bn.json`](app/i18n/bn.json).
 
-## Workspace Auth Headers
+- `organs.<id>` — name, nickname, intro, the four facts, the fun fact, and one
+  `{ label, detail }` per coloured dot (`hotspots.<hotspot-id>`).
+- Everything else — buttons, tips, titles — is UI copy.
+- `{organ}` / `{where}` are placeholders filled in by the app; keep them.
+- Write numbers with Bangla numerals (০১২৩৪৫৬৭৮৯). A test fails on any Latin letter
+  or ASCII digit in the file. For numbers computed at runtime, use
+  `toBanglaDigits()` from `app/i18n`.
 
-OpenAI workspace sites can read the current user's email from
-`oai-authenticated-user-email`.
+Organ ids, 3D model paths and dot positions are in
+[`app/lib/anatomy-data.ts`](app/lib/anatomy-data.ts). If you add a dot there, add
+its text to `bn.json` too (a test checks they match).
 
-SIWC-authenticated workspace sites may also receive
-`oai-authenticated-user-full-name` when the user's SIWC profile has a non-empty
-`name` claim. The full-name value is percent-encoded UTF-8 and is accompanied by
-`oai-authenticated-user-full-name-encoding: percent-encoded-utf-8`.
+## Regenerate the narration
 
-Treat the full name as optional and fall back to email when it is absent:
+Narration is pre-rendered to MP3 (most devices have no Bangla voice for
+`speechSynthesis`):
 
-```tsx
-import { headers } from "next/headers";
-
-export default async function Home() {
-  const requestHeaders = await headers();
-  const email = requestHeaders.get("oai-authenticated-user-email");
-  const encodedFullName = requestHeaders.get("oai-authenticated-user-full-name");
-  const fullName =
-    encodedFullName &&
-    requestHeaders.get("oai-authenticated-user-full-name-encoding") ===
-      "percent-encoded-utf-8"
-      ? decodeURIComponent(encodedFullName)
-      : null;
-
-  const displayName = fullName ?? email;
-  // ...
-}
+```bash
+npm run audio                               # re-render clips whose text changed
+npm run audio -- --force                    # re-render everything
+npm run audio -- --voice bn-BD-PradeepNeural
 ```
 
-## Optional Dispatch-Owned ChatGPT Sign-In
+[`scripts/generate-audio.mjs`](scripts/generate-audio.mjs) reads `bn.json` and
+writes:
 
-Import the ready-to-use helpers from `app/chatgpt-auth.ts` when the site needs
-optional or required ChatGPT sign-in:
+| file | what it says |
+| --- | --- |
+| `public/audio/<organ-id>.mp3` | `intro` + `funFact` |
+| `public/audio/<organ-id>/<hotspot-id>.mp3` | `label` + `detail` |
 
-- Use `getChatGPTUser()` for optional signed-in UI.
-- Use `requireChatGPTUser(returnTo)` for server-rendered pages that should send
-  anonymous visitors through Sign in with ChatGPT.
-- Use `chatGPTSignInPath(returnTo)` and `chatGPTSignOutPath(returnTo)` for
-  browser links or actions.
-- Pass a same-origin relative `returnTo` path for the destination after sign-in
-  or sign-out. The helper validates and safely encodes it.
-- Mark protected pages with `export const dynamic = "force-dynamic"` because
-  they depend on per-request identity headers.
+It uses Microsoft Edge's online neural TTS (voice `bn-BD-NabanitaNeural`; the
+same service as the Python `edge-tts` package) through the `msedge-tts` npm
+package, so it needs an internet connection but no API key or Python.
+`public/audio/manifest.json` records the text of each clip so unchanged clips
+are skipped. Commit the MP3s together with the text change.
 
-Dispatch owns `/signin-with-chatgpt`, `/signout-with-chatgpt`, `/callback`, the
-OAuth cookies, and identity header injection. Do not implement app routes for
-those reserved paths. Routes that do not import and call the helper remain
-anonymous-compatible.
+The click "pop" is synthesised in the browser with the Web Audio API — no
+audio file, nothing to license.
 
-SIWC establishes identity only; it does not prove workspace membership. Use the
-Sites hosting platform's access policy controls for workspace-wide restrictions,
-or enforce explicit server-side membership or allowlist checks.
+## Sound behaviour
 
-Use SIWC for account pages, user-specific dashboards, saved records, and write
-actions tied to the current ChatGPT user. Leave public content anonymous.
+- Tapping an organ (in the list, its picture, or on the 3D model) or a dot plays
+  a soft pop, then the narration.
+- A new tap stops the current narration, so sounds never overlap.
+- 🔊/🔇 button (top right) mutes; the choice is saved in `localStorage`.
+- Audio only starts from a tap, so mobile autoplay rules never block it.
+  Narration files are fetched after the first touch so later taps start instantly.
 
-## Useful Commands
+## Test
 
-- `npm run dev`: start local development
-- `npm run build`: verify the vinext build output
-- `npm test`: build the starter and verify its rendered loading skeleton
-- `npm run db:generate`: generate Drizzle migrations after schema changes
+```bash
+npm run lint
+npm run build:pages     # static export to out/ with base path /anatomy
+npm test                # Playwright: desktop, phone (375×667), tablet (820×1180)
+```
 
-## Learn More
+The tests run against the built site under `/anatomy/`, exactly like Pages. First
+run: `npx playwright install chromium`.
 
-- [vinext Documentation](https://github.com/cloudflare/vinext)
-- [Drizzle D1 Guide](https://orm.drizzle.team/docs/get-started/d1-new)
+## Deploy
+
+Every push to `main` runs [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml):
+install → lint → static build → Playwright tests → publish to GitHub Pages.
+
+One-time setup: repository **Settings → Pages → Source: GitHub Actions**.
+
+The Pages build is switched on by `GITHUB_PAGES=1`, which turns on
+`output: "export"` and `basePath: "/<repo>"` in `next.config.ts`. Asset URLs that
+Next doesn't rewrite itself (models, pictures, audio) go through `withBase()` in
+[`app/lib/paths.ts`](app/lib/paths.ts).
