@@ -1,20 +1,27 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import gsap from "gsap";
-import type { Hotspot } from "../../i18n/merge";
+import type { Hotspot } from "../../i18n";
 import { AnatomyAssetManager, type LoadedOrgan } from "./loaders";
 import { HotspotLayer } from "./hotspots";
 
 type ViewerCallbacks = {
   onLoading: (loading: boolean, progress: number) => void;
   onSelect: (hotspot: Hotspot | null) => void;
-  /** Quiz mode: every dot press is reported, with no selection toggling. */
-  onPick?: (hotspot: Hotspot) => void;
+  /** Every tap on a dot, including a repeat tap on the selected one. */
+  onHotspotTap?: (hotspot: Hotspot) => void;
+  /** A tap on the organ itself, away from any dot. */
+  onOrganTap?: () => void;
   /** Authoring mode: a point on the mesh surface, in pivot space. */
   onAuthorPoint?: (point: { x: number; y: number; z: number }) => void;
 };
 
-const DOT_PIXELS = 34;
+/** Big enough for a small finger: dots render at 44px and accept taps a
+ *  little outside their edge. */
+const DOT_PIXELS = 44;
+const PICK_RADIUS = 34;
+/** Fingers wobble more than mice; a tap may drift this far and still count. */
+const TAP_SLOP = { mouse: 5, touch: 12 };
 const CAMERA_FOV = 34;
 const DEPTH_PREPASS = "depth-prepass";
 const PLINTH_Y = -2.5;
@@ -41,11 +48,8 @@ export class AnatomyViewer {
   private clock = new THREE.Clock();
   private resizeObserver: ResizeObserver;
   private intersectionObserver: IntersectionObserver;
-  private clipPlane = new THREE.Plane(new THREE.Vector3(-1, 0, 0), 0);
   /** Writes depth only — used to resolve a fading organ to one surface. */
   private depthMaterial = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: true, depthTest: true });
-  private crossSection = false;
-  private isolated = false;
 
   private width = 1;
   private height = 1;
@@ -66,13 +70,13 @@ export class AnatomyViewer {
   private hoverProbe: { x: number; y: number } | null = null;
   private pointerId: number | null = null;
   private pointerStart = { x: 0, y: 0 };
+  private tapSlop = TAP_SLOP.mouse;
   private dragged = false;
   private calloutEl: HTMLElement | null = null;
   private fadeTween: gsap.core.Tween | null = null;
   private disposed = false;
-  private quizMode = false;
   private authoring = false;
-  private authorRaycaster = new THREE.Raycaster();
+  private raycaster = new THREE.Raycaster();
 
   constructor(container: HTMLElement, callbacks: ViewerCallbacks) {
     this.container = container;
@@ -100,7 +104,6 @@ export class AnatomyViewer {
     // Shadow mapping would render every organ twice per frame; a baked contact
     // shadow gives the same read for free.
     this.renderer.shadowMap.enabled = false;
-    this.renderer.localClippingEnabled = true;
     // Localised by the React layer via setCanvasLabel once the dictionary is known.
     this.renderer.domElement.setAttribute("aria-label", "Interactive 3D anatomy model");
     this.renderer.domElement.tabIndex = 0;
@@ -291,7 +294,6 @@ export class AnatomyViewer {
     // Anchor the dots while the organ is still invisible, then play the intro.
     this.hotspots.attach(organ.pivot, hotspots, organ.meshes);
     this.hotspots.setPixelSize(DOT_PIXELS, this.height, CAMERA_FOV);
-    if (this.crossSection) this.applyClipping(true);
 
     const glow = this.scene.getObjectByName("organ-glow") as THREE.PointLight | undefined;
     glow?.color.set(accent);
@@ -449,12 +451,13 @@ export class AnatomyViewer {
   private onPointerDown = (event: PointerEvent) => {
     this.pointerId = event.pointerId;
     this.pointerStart = { x: event.clientX, y: event.clientY };
+    this.tapSlop = event.pointerType === "mouse" ? TAP_SLOP.mouse : TAP_SLOP.touch;
     this.dragged = false;
   };
 
   private onPointerMove = (event: PointerEvent) => {
     if (this.pointerId !== null) {
-      if (Math.hypot(event.clientX - this.pointerStart.x, event.clientY - this.pointerStart.y) > 5) this.dragged = true;
+      if (Math.hypot(event.clientX - this.pointerStart.x, event.clientY - this.pointerStart.y) > this.tapSlop) this.dragged = true;
       return;
     }
     this.hoverProbe = { x: event.offsetX, y: event.offsetY };
@@ -473,26 +476,33 @@ export class AnatomyViewer {
       return;
     }
 
-    const marker = this.hotspots.pick(event.offsetX, event.offsetY, this.camera, this.width, this.height);
-    if (this.quizMode) {
-      // Every press counts as an answer, so no toggling and no sticky selection.
-      if (marker) this.callbacks.onPick?.(marker.hotspot);
+    // A repeat tap on the open dot keeps it open (and replays its sound) —
+    // small children tap things again and again. Empty space closes it.
+    const marker = this.hotspots.pick(event.offsetX, event.offsetY, this.camera, this.width, this.height, PICK_RADIUS);
+    if (marker) {
+      this.select(marker.hotspot.id);
+      this.callbacks.onHotspotTap?.(marker.hotspot);
       return;
     }
-    this.select(marker && marker.hotspot.id !== this.selectedId ? marker.hotspot.id : null);
+    this.select(null);
+    if (this.hitOrgan(event.offsetX, event.offsetY)) this.callbacks.onOrganTap?.();
   };
 
+  /** Raycasts the organ mesh. Only runs on a tap, never per frame. */
+  private hitOrgan(px: number, py: number) {
+    if (!this.organ) return null;
+    const ndc = new THREE.Vector2((px / this.width) * 2 - 1, -(py / this.height) * 2 + 1);
+    this.raycaster.setFromCamera(ndc, this.camera);
+    return this.raycaster.intersectObjects(this.organ.meshes, false)[0] ?? null;
+  }
+
   /**
-   * Raycasts the actual mesh and reports the hit in pivot space — the same
-   * coordinate system `anatomy-data.ts` authors hotspots in. Only ever runs on
-   * a deliberate click in authoring mode, so its cost never touches the
-   * interactive path.
+   * Reports the mesh hit in pivot space — the same coordinate system
+   * `anatomy-data.ts` authors hotspots in.
    */
   private captureAuthorPoint(px: number, py: number) {
     if (!this.organ) return;
-    const ndc = new THREE.Vector2((px / this.width) * 2 - 1, -(py / this.height) * 2 + 1);
-    this.authorRaycaster.setFromCamera(ndc, this.camera);
-    const hit = this.authorRaycaster.intersectObjects(this.organ.meshes, false)[0];
+    const hit = this.hitOrgan(px, py);
     if (!hit) return;
     const local = this.organ.pivot.worldToLocal(hit.point.clone());
     this.callbacks.onAuthorPoint?.({
@@ -502,30 +512,10 @@ export class AnatomyViewer {
     });
   }
 
-  /** Where a dot currently sits, as a 0–1 fraction of the viewport height.
-   *  Lets the UI place feedback away from the structure it is pointing at. */
-  hotspotScreenY(id: string): number | null {
-    const point = this.hotspots.screenPosition(id, this.camera, this.width, this.height);
-    return point ? point.y / this.height : null;
-  }
-
-  setQuizMode(enabled: boolean) {
-    this.quizMode = enabled;
-    this.select(null);
-    this.hotspots.clearFlash();
-    this.dirty = true;
-  }
-
   setAuthoring(enabled: boolean) {
     this.authoring = enabled;
     this.renderer.domElement.style.cursor = enabled ? "crosshair" : "";
     this.dirty = true;
-  }
-
-  /** Green/red ring on a dot after a quiz answer. */
-  flash(id: string, correct: boolean) {
-    this.hotspots.flash(id, correct);
-    this.busy(1.1);
   }
 
   private onPointerLeave = () => {
@@ -574,7 +564,12 @@ export class AnatomyViewer {
     const point = this.hotspots.screenPosition(this.selectedId, this.camera, this.width, this.height);
     if (!point) return;
     this.calloutEl.style.transform = `translate3d(${Math.round(point.x)}px, ${Math.round(point.y)}px, 0)`;
-    this.calloutEl.dataset.side = point.x > this.width * 0.6 ? "left" : "right";
+    // Open towards whichever side has room for the card — on a phone the
+    // canvas is barely wider than two cards, so a fixed split clips it.
+    const cardWidth = (this.calloutEl.firstElementChild as HTMLElement | null)?.offsetWidth ?? 0;
+    const fitsRight = point.x + 34 + cardWidth <= this.width;
+    const fitsLeft = point.x - 34 - cardWidth >= 0;
+    this.calloutEl.dataset.side = fitsRight && (!fitsLeft || point.x < this.width / 2) ? "right" : fitsLeft ? "left" : "below";
     this.calloutEl.dataset.behind = point.opacity < 0.3 ? "true" : "false";
   }
 
@@ -613,55 +608,6 @@ export class AnatomyViewer {
       duration: 0.5,
       ease: "power2.out",
     });
-  }
-
-  toggleIsolate() {
-    this.isolated = !this.isolated;
-    const plinth = this.plinth.material as THREE.MeshStandardMaterial;
-    plinth.transparent = true;
-    this.tween(plinth, { opacity: this.isolated ? 0.15 : 1, duration: 0.45 });
-    this.tween(this.contactShadow.material, { opacity: this.isolated ? 0.08 : 0.55, duration: 0.45 });
-    return this.isolated;
-  }
-
-  toggleCrossSection() {
-    this.crossSection = !this.crossSection;
-    this.applyClipping(this.crossSection);
-    gsap.fromTo(
-      this.clipPlane,
-      { constant: -1.8 },
-      {
-        constant: this.crossSection ? 0 : -1.8,
-        duration: 0.85,
-        ease: "power2.inOut",
-        onUpdate: () => (this.dirty = true),
-      },
-    );
-    this.busy(0.95);
-    return this.crossSection;
-  }
-
-  private applyClipping(enabled: boolean) {
-    if (!this.organ) return;
-    const planes = enabled ? [this.clipPlane] : null;
-    [...this.materials(this.organ), this.depthMaterial].forEach((material) => {
-      material.clippingPlanes = planes;
-      material.needsUpdate = true;
-    });
-    this.dirty = true;
-  }
-
-  toggleLayers() {
-    if (!this.organ) return false;
-    let enabled = false;
-    this.materials(this.organ).forEach((material) => {
-      if (material instanceof THREE.MeshStandardMaterial) {
-        material.wireframe = !material.wireframe;
-        enabled = material.wireframe;
-      }
-    });
-    this.dirty = true;
-    return enabled;
   }
 
   dispose() {

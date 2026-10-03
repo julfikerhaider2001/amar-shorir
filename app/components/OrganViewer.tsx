@@ -1,157 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import {
-  Box,
-  CircleDashed,
-  Layers3,
-  Maximize2,
-  RotateCcw,
-  ScanLine,
-  Search,
-  Check,
-  Crosshair,
-  Sparkles,
-  X,
-} from "lucide-react";
-import type { Hotspot, Organ } from "../i18n/merge";
-import { format, type UiDictionary } from "../i18n/types";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { Crosshair, Maximize2, RotateCcw, RefreshCw, X, ZoomIn, ZoomOut } from "lucide-react";
+import { format, t, toBanglaDigits, type Hotspot, type Organ } from "../i18n";
 import type { AnatomyViewer } from "../lib/three/viewer";
 
 type Props = {
   organ: Organ;
-  t: UiDictionary;
   autoRotate: boolean;
   onAutoRotate: (enabled: boolean) => void;
-  compare: boolean;
-  onCompare: () => void;
-  quizActive: boolean;
-  onQuizExit: () => void;
+  onOrganTap: () => void;
+  onHotspotTap: (hotspot: Hotspot) => void;
 };
-
-/** Fisher–Yates. The quiz asks for every structure once, in a fresh order. */
-function shuffle<T>(items: T[]): T[] {
-  const out = [...items];
-  for (let i = out.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [out[i], out[j]] = [out[j], out[i]];
-  }
-  return out;
-}
-
-type PickRef = { current: (hotspot: Hotspot) => void };
-
-/**
- * The labelling quiz. Owns its own round state and is mounted with a `key` per
- * organ, so switching specimens restarts it without a resetting effect.
- */
-function LabelQuiz({
-  hotspots, t, pickRef, flash, screenY, onExit,
-}: {
-  hotspots: Hotspot[];
-  t: UiDictionary;
-  pickRef: PickRef;
-  flash: (id: string, correct: boolean) => void;
-  screenY: (id: string) => number | null;
-  onExit: () => void;
-}) {
-  const [seed, setSeed] = useState(0);
-  const [step, setStep] = useState(0);
-  const [score, setScore] = useState(0);
-  const [answer, setAnswer] = useState<{ correct: boolean; picked: string; target: string; atTop: boolean } | null>(null);
-  const [results, setResults] = useState<boolean[]>([]);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const order = useMemo(() => shuffle(hotspots), [hotspots, seed]);
-  const target = order[step];
-  const finished = step >= order.length;
-
-  // Refreshed after every render so the viewer's long-lived callback always
-  // sees the current question. Writing a ref in an effect is safe; writing one
-  // during render is not.
-  useEffect(() => {
-    pickRef.current = (hotspot) => {
-      if (!target || answer) return;   // ignore extra clicks while feedback shows
-      const correct = hotspot.id === target.id;
-      flash(hotspot.id, correct);
-      // A miss also marks where the answer actually was — otherwise the learner
-      // is told they were wrong but never shown the right structure.
-      if (!correct) flash(target.id, true);
-      // Sit the card on the opposite half from the structure being revealed —
-      // otherwise the panel hides the dot it is telling the learner to look at.
-      const revealed = screenY(correct ? hotspot.id : target.id);
-      setAnswer({ correct, picked: hotspot.label, target: target.label, atTop: (revealed ?? 0) > 0.55 });
-      setResults((list) => [...list, correct]);
-      if (correct) setScore((value) => value + 1);
-      window.setTimeout(() => {
-        setAnswer(null);
-        setStep((value) => value + 1);
-      }, correct ? 1200 : 2400);   // a miss carries more to read
-    };
-  });
-
-  const retry = () => {
-    setStep(0);
-    setScore(0);
-    setAnswer(null);
-    setResults([]);
-    setSeed((value) => value + 1);
-  };
-
-  return (
-    <>
-      {target && (
-        <div className="quiz-bar" role="status" aria-live="polite">
-          <div className="quiz-prompt">
-            <em>{t.quiz.find}</em>
-            <strong>{target.label}</strong>
-          </div>
-          <div className="quiz-meta">
-            <span className="quiz-progress">{format(t.quiz.progress, { current: String(step + 1), total: String(order.length) })}</span>
-            <ol className="quiz-pips" aria-hidden>
-              {order.map((hotspot, index) => (
-                <li
-                  key={hotspot.id}
-                  className={index < results.length ? (results[index] ? "ok" : "no") : index === step ? "now" : ""}
-                />
-              ))}
-            </ol>
-            <small>{t.quiz.hint}</small>
-          </div>
-          <button type="button" onClick={onExit} aria-label={t.quiz.exit}><X size={16} /></button>
-        </div>
-      )}
-
-      {answer && (
-        <div className={`quiz-answer ${answer.correct ? "ok" : "no"} ${answer.atTop ? "at-top" : ""}`} role="status" aria-live="assertive">
-          <span className="quiz-answer-icon">{answer.correct ? <Check size={22} /> : <X size={22} />}</span>
-          <div>
-            <strong>{answer.correct ? t.quiz.correct : t.quiz.wrong}</strong>
-            {answer.correct ? (
-              <span>{answer.target}</span>
-            ) : (
-              <>
-                <span>{format(t.quiz.reveal, { label: answer.picked })}</span>
-                <span className="quiz-answer-hint">{format(t.quiz.answer, { label: answer.target })}</span>
-              </>
-            )}
-          </div>
-        </div>
-      )}
-
-      {finished && (
-        <div className="quiz-summary" role="dialog" aria-modal="true">
-          <span className="modal-icon">{score === order.length ? "★" : "✓"}</span>
-          <h2>{t.quiz.done}</h2>
-          <p>{format(t.quiz.score, { score: String(score), total: String(order.length) })}</p>
-          <div className="quiz-summary-actions">
-            <button type="button" className="lesson-button" onClick={retry}>{t.quiz.retry}</button>
-            <button type="button" onClick={onExit}>{t.quiz.exit}</button>
-          </div>
-        </div>
-      )}
-    </>
-  );
-}
 
 /** `?authoring=1` is read from the URL without a hydration mismatch. */
 function useAuthoringFlag() {
@@ -162,27 +22,31 @@ function useAuthoringFlag() {
   );
 }
 
-export function OrganViewer({ organ, t, autoRotate, onAutoRotate, compare, onCompare, quizActive, onQuizExit }: Props) {
+export function OrganViewer({ organ, autoRotate, onAutoRotate, onOrganTap, onHotspotTap }: Props) {
   const mountRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<AnatomyViewer | null>(null);
   const organRef = useRef(organ);
   const autoRotateRef = useRef(autoRotate);
-  const canvasLabelRef = useRef(t.viewer.canvas);
   const [selected, setSelected] = useState<Hotspot | null>(null);
   const [loading, setLoading] = useState(true);
   const [progress, setProgress] = useState(0);
   const [slowLoad, setSlowLoad] = useState(false);
-  const [activeTool, setActiveTool] = useState<string | null>(null);
 
-  // Opt-in coordinate probe for placing hotspots — not a user-facing feature.
+  // Opt-in coordinate probe for placing hotspots — a developer tool, not a
+  // user-facing feature, so its strings are deliberately not translated.
   const authoring = useAuthoringFlag();
   const authoringRef = useRef(authoring);
   const [authorPoint, setAuthorPoint] = useState<{ x: number; y: number; z: number } | null>(null);
   const [copied, setCopied] = useState(false);
 
   // The viewer captures its callbacks once, so live handlers go through refs.
-  const pickRef = useRef<(hotspot: Hotspot) => void>(() => {});
+  const organTapRef = useRef(onOrganTap);
+  const hotspotTapRef = useRef(onHotspotTap);
   const authorRef = useRef<(point: { x: number; y: number; z: number }) => void>(() => {});
+  useEffect(() => {
+    organTapRef.current = onOrganTap;
+    hotspotTapRef.current = onHotspotTap;
+  });
   useEffect(() => {
     authorRef.current = setAuthorPoint;
   }, []);
@@ -208,11 +72,6 @@ export function OrganViewer({ organ, t, autoRotate, onAutoRotate, compare, onCom
   }, [autoRotate]);
 
   useEffect(() => {
-    canvasLabelRef.current = t.viewer.canvas;
-    viewerRef.current?.setCanvasLabel(t.viewer.canvas);
-  }, [t.viewer.canvas]);
-
-  useEffect(() => {
     let cancelled = false;
     let viewer: AnatomyViewer | null = null;
 
@@ -225,11 +84,12 @@ export function OrganViewer({ organ, t, autoRotate, onAutoRotate, compare, onCom
           setProgress(value);
           if (isLoading) setSlowLoad(false);
         },
-        onPick: (hotspot) => pickRef.current(hotspot),
+        onHotspotTap: (hotspot) => hotspotTapRef.current(hotspot),
+        onOrganTap: () => organTapRef.current(),
         onAuthorPoint: (point) => authorRef.current(point),
       });
       viewerRef.current = viewer;
-      viewer.setCanvasLabel(canvasLabelRef.current);
+      viewer.setCanvasLabel(t.viewer.canvas);
       viewer.setAutoRotate(autoRotateRef.current);
       viewer.setAuthoring(authoringRef.current);
       const current = organRef.current;
@@ -253,12 +113,8 @@ export function OrganViewer({ organ, t, autoRotate, onAutoRotate, compare, onCom
     });
   }, [organ]);
 
-  // A spinning specimen makes "click the mitral valve" a game of chance, so the
-  // quiz holds the model still and restores the user's setting on exit.
-  useEffect(() => viewerRef.current?.setAutoRotate(autoRotate && !quizActive), [autoRotate, quizActive]);
-  useEffect(() => viewerRef.current?.setQuizMode(quizActive), [quizActive]);
+  useEffect(() => viewerRef.current?.setAutoRotate(autoRotate), [autoRotate]);
   useEffect(() => viewerRef.current?.setAuthoring(authoring), [authoring]);
-
 
   // The viewer drives the callout's position directly, so a spinning model
   // never costs a React render.
@@ -268,62 +124,52 @@ export function OrganViewer({ organ, t, autoRotate, onAutoRotate, compare, onCom
 
   const handleTool = (tool: string) => {
     const viewer = viewerRef.current;
-    if (!viewer) return;
     if (tool === "rotate") onAutoRotate(!autoRotate);
-    if (tool === "zoom") viewer.zoom(-1);
-    if (tool === "isolate") setActiveTool(viewer.toggleIsolate() ? tool : null);
-    if (tool === "section") setActiveTool(viewer.toggleCrossSection() ? tool : null);
-    if (tool === "layers") setActiveTool(viewer.toggleLayers() ? tool : null);
-    if (tool === "compare") onCompare();
-    if (tool === "reset") {
-      viewer.reset();
-      setActiveTool(null);
-    }
+    if (tool === "zoom-in") viewer?.zoom(-1);
+    if (tool === "zoom-out") viewer?.zoom(1);
+    if (tool === "reset") viewer?.reset();
   };
 
   const tools = [
-    { id: "rotate", label: t.tools.rotate, icon: RotateCcw },
-    { id: "zoom", label: t.tools.zoom, icon: Search },
-    { id: "isolate", label: t.tools.isolate, icon: CircleDashed },
-    { id: "section", label: t.tools.section, icon: ScanLine },
-    { id: "layers", label: t.tools.layers, icon: Layers3 },
-    { id: "compare", label: t.tools.compare, icon: Box },
+    { id: "rotate", label: t.tools.rotate, icon: RefreshCw, pressed: autoRotate },
+    { id: "zoom-in", label: t.tools.zoomIn, icon: ZoomIn },
+    { id: "zoom-out", label: t.tools.zoomOut, icon: ZoomOut },
     { id: "reset", label: t.tools.reset, icon: RotateCcw },
   ];
 
   return (
-    <section className="viewer-shell" aria-label={format(t.viewer.title, { organ: organ.name })}>
+    <section className="viewer-shell" aria-label={format(t.viewer.title, { organ: organ.name })} data-state={loading ? "loading" : "ready"}>
       <div className="viewer-glow" style={{ "--organ-accent": organ.accent } as React.CSSProperties} />
-      <div ref={mountRef} className="three-mount" />
+      <div ref={mountRef} className="three-mount" data-testid="model" />
 
-      <div className="viewer-tools" aria-label={t.tools.label}>
-        {tools.map(({ id, label, icon: Icon }) => (
+      <div className="viewer-tools" role="toolbar" aria-label={t.tools.label}>
+        {tools.map(({ id, label, icon: Icon, pressed }) => (
           <button
             key={id}
             type="button"
-            className={`tool-button ${(activeTool === id || (id === "compare" && compare)) ? "active" : ""}`}
+            className={`tool-button ${pressed ? "active" : ""}`}
             onClick={() => handleTool(id)}
-            aria-pressed={activeTool === id || (id === "compare" && compare)}
+            aria-pressed={pressed}
+            aria-label={label}
             title={label}
           >
-            <Icon size={19} strokeWidth={1.65} />
-            <span>{label}</span>
+            <Icon size={24} strokeWidth={2.2} aria-hidden />
+            <span aria-hidden>{label}</span>
           </button>
         ))}
       </div>
 
-      {!quizActive && (
-      <aside className="tip-note" aria-label={t.viewer.tip}>
-        <span><Sparkles size={15} /> {t.viewer.tip}</span>
-        <p>{t.viewer.tipDrag}<br />{t.viewer.tipScroll}<br />{t.viewer.tipClick}</p>
-      </aside>
-      )}
+      <ul className="tip-note" aria-hidden>
+        <li><span>👆</span>{t.viewer.tipDrag}</li>
+        <li><span>🤏</span>{t.viewer.tipPinch}</li>
+        <li><span>👉</span>{t.viewer.tipTap}</li>
+      </ul>
 
-      {selected && !quizActive && (
+      {selected && (
         <div className="hotspot-callout" ref={calloutRef} data-side="right">
-          <div className="callout-body" style={{ "--hotspot-color": selected.color } as React.CSSProperties}>
-            <button className="callout-close" type="button" onClick={() => viewerRef.current?.clearSelection()} aria-label={t.modal.close}>
-              <X size={13} />
+          <div className="callout-body" style={{ "--hotspot-color": selected.color } as React.CSSProperties} role="status">
+            <button className="callout-close" type="button" onClick={() => viewerRef.current?.clearSelection()} aria-label={t.viewer.close}>
+              <X size={18} />
             </button>
             <b>{selected.label}</b>
             <small>{selected.detail}</small>
@@ -331,24 +177,15 @@ export function OrganViewer({ organ, t, autoRotate, onAutoRotate, compare, onCom
         </div>
       )}
 
-      {/* Screen-reader equivalent of the dots, which live in the canvas. */}
+      {/* Keyboard and screen-reader route to every labelled spot, which in the
+          canvas are only reachable by pointer. Visually hidden. */}
       <ul className="hotspot-index" aria-label={t.viewer.structures}>
         {organ.hotspots.map((hotspot) => (
-          <li key={hotspot.id}>{hotspot.label}: {hotspot.detail}</li>
+          <li key={hotspot.id}>
+            <button type="button" onClick={() => onHotspotTap(hotspot)}>{hotspot.label}: {hotspot.detail}</button>
+          </li>
         ))}
       </ul>
-
-      {quizActive && (
-        <LabelQuiz
-          key={organ.id}
-          hotspots={organ.hotspots}
-          t={t}
-          pickRef={pickRef}
-          flash={(id, correct) => viewerRef.current?.flash(id, correct)}
-          screenY={(id) => viewerRef.current?.hotspotScreenY(id) ?? null}
-          onExit={onQuizExit}
-        />
-      )}
 
       {authoring && (
         <div className="authoring-panel">
@@ -375,23 +212,11 @@ export function OrganViewer({ organ, t, autoRotate, onAutoRotate, compare, onCom
 
       {loading && slowLoad && (
         <div className="model-loader" role="status" aria-live="polite">
-          <div className="loader-orbit"><Maximize2 size={20} /></div>
+          <div className="loader-orbit"><Maximize2 size={24} /></div>
           <strong>{format(t.viewer.loading, { organ: organ.name })}</strong>
-          <span>{Math.max(8, Math.round(progress * 100))}%</span>
+          <span>{toBanglaDigits(Math.max(8, Math.round(progress * 100)))}%</span>
         </div>
       )}
-
-      {!quizActive && (
-      <button className="auto-rotate" type="button" onClick={() => onAutoRotate(!autoRotate)} aria-pressed={autoRotate}>
-        <RotateCcw size={14} /> {t.viewer.autoRotate}
-        <span className={`switch ${autoRotate ? "on" : ""}`}><i /></span>
-      </button>
-      )}
-
-      <div className="view-caption">
-        <span>{t.viewer.caption}</span>
-        <strong>{organ.scientificName}</strong>
-      </div>
     </section>
   );
 }

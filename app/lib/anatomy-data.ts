@@ -3,6 +3,8 @@
 // Anatomica (TA2) Latin term, which is the canonical key locale files translate
 // against. Positions, colours, and model paths are locale-independent.
 
+import { withBase } from "./paths";
+
 export type OrganId =
   | "heart"
   | "brain"
@@ -37,7 +39,7 @@ export type OrganStructure = {
 export const organStructures: OrganStructure[] = [
   {
     id: "heart",
-    model: "/models/heart.glb",
+    model: withBase("/models/heart.glb"),
     icon: "♥",
     accent: "#ee7c6a",
     illustrated: true,
@@ -53,7 +55,7 @@ export const organStructures: OrganStructure[] = [
   },
   {
     id: "brain",
-    model: "/models/brain.glb",
+    model: withBase("/models/brain.glb"),
     icon: "◉",
     accent: "#c58696",
     illustrated: true,
@@ -67,7 +69,7 @@ export const organStructures: OrganStructure[] = [
   },
   {
     id: "lungs",
-    model: "/models/lungs.glb",
+    model: withBase("/models/lungs.glb"),
     icon: "◍",
     accent: "#dd8f8b",
     illustrated: true,
@@ -82,7 +84,7 @@ export const organStructures: OrganStructure[] = [
   },
   {
     id: "liver",
-    model: "/models/liver.glb",
+    model: withBase("/models/liver.glb"),
     icon: "≈",
     accent: "#b86858",
     illustrated: true,
@@ -95,7 +97,7 @@ export const organStructures: OrganStructure[] = [
   },
   {
     id: "kidneys",
-    model: "/models/kidneys.glb",
+    model: withBase("/models/kidneys.glb"),
     icon: "∞",
     accent: "#c96963",
     illustrated: true,
@@ -108,7 +110,7 @@ export const organStructures: OrganStructure[] = [
   },
   {
     id: "eyeball",
-    model: "/models/eyeball.glb",
+    model: withBase("/models/eyeball.glb"),
     icon: "⊙",
     accent: "#7294b9",
     illustrated: true,
@@ -121,7 +123,7 @@ export const organStructures: OrganStructure[] = [
   },
   {
     id: "intestine",
-    model: "/models/intestine.glb",
+    model: withBase("/models/intestine.glb"),
     icon: "§",
     accent: "#d78b77",
     illustrated: true,
@@ -134,7 +136,7 @@ export const organStructures: OrganStructure[] = [
   },
   {
     id: "pancreas",
-    model: "/models/pancreas.glb",
+    model: withBase("/models/pancreas.glb"),
     icon: "◈",
     accent: "#c69a5e",
     illustrated: true,
@@ -148,7 +150,7 @@ export const organStructures: OrganStructure[] = [
   },
   {
     id: "skin",
-    model: "/models/skin.glb",
+    model: withBase("/models/skin.glb"),
     icon: "▦",
     accent: "#c99277",
     illustrated: true,

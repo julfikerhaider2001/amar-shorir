@@ -1,36 +1,15 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import gsap from "gsap";
-import {
-  ArrowRight,
-  BookOpen,
-  Bookmark,
-  BrainCircuit,
-  ChevronDown,
-  CircleHelp,
-  Compass,
-  FileText,
-  Globe,
-  Heart,
-  LibraryBig,
-  Microscope,
-  NotebookPen,
-  Play,
-  Search,
-  Share2,
-  Sparkles,
-  Stethoscope,
-  X,
-} from "lucide-react";
+import { Heart, Play, Volume2, X } from "lucide-react";
 import { OrganViewer } from "./OrganViewer";
 import type { OrganId } from "../lib/anatomy-data";
-import type { LocaleConfig } from "../i18n/config";
-import { locales } from "../i18n/config";
-import { buildOrgans, indexOrgans, type Organ } from "../i18n/merge";
-import { format, type Dictionary, type UiDictionary } from "../i18n/types";
+import { format, organById, organs, t, type Hotspot, type Organ } from "../i18n";
+import { narrationUrl, withBase } from "../lib/paths";
+import { sound } from "../lib/sound";
 
-type Modal = "lesson" | "quiz" | "animation" | "system" | null;
+type Modal = "body" | "move" | null;
 
 /**
  * Renders an organ illustration, or its accent glyph for organs that ship as a
@@ -40,20 +19,15 @@ type Modal = "lesson" | "quiz" | "animation" | "system" | null;
 function OrganArt({
   organ,
   asset,
-  alt,
   size,
 }: {
   organ: Organ;
-  asset: "thumb" | "organ" | "microscopic" | "compare" | "location";
-  alt: string;
+  asset: "thumb" | "organ" | "location";
   size?: number;
 }) {
   if (!organ.illustrated) {
-    // An empty alt means a surrounding control already names this, so the
-    // glyph should be skipped rather than announced with no label.
-    const labelling = alt ? { role: "img", "aria-label": alt } : { "aria-hidden": true };
     return (
-      <span className="art-fallback" style={{ "--art-accent": organ.accent } as React.CSSProperties} {...labelling}>
+      <span className="art-fallback" style={{ "--art-accent": organ.accent } as React.CSSProperties} aria-hidden>
         {organ.icon}
       </span>
     );
@@ -61,8 +35,8 @@ function OrganArt({
   return (
     <img
       key={`${organ.id}-${asset}`}
-      src={`/anatomy/${organ.id}/${asset}.webp`}
-      alt={alt}
+      src={withBase(`/anatomy/${organ.id}/${asset}.webp`)}
+      alt=""
       width={size}
       height={size}
       loading={asset === "thumb" ? "eager" : "lazy"}
@@ -71,94 +45,76 @@ function OrganArt({
   );
 }
 
-
-/**
- * Measurements like "250–350 g" begin with a digit, which Unicode treats as
- * neutral — inside an RTL paragraph the range gets visually reversed. Digits
- * are not "strong" characters, so `unicode-bidi: plaintext` cannot rescue it;
- * the run has to be isolated as LTR explicitly.
- */
-function Measure({ children }: { children: string }) {
-  return <bdi dir={/^[\d(]/.test(children.trim()) ? "ltr" : "auto"}>{children}</bdi>;
-}
-
-/**
- * Switches language by swapping the leading path segment, so the current
- * document is preserved rather than bouncing through the root redirect.
- *
- * The native <select> is stretched transparently over the whole pill rather
- * than sitting inline. A <label> only *focuses* a select when clicked — it does
- * not open it — so anything outside the select's own box (the globe, the
- * chevron, the padding) would otherwise be a dead zone. Overlaying it means a
- * click anywhere on the control opens the picker, while the visible row
- * underneath stays fully styleable.
- */
-function LanguageSwitcher({ locale, t }: { locale: LocaleConfig; t: UiDictionary }) {
+/** 🔊 / 🔇 — the choice is kept in localStorage by `sound`. */
+function MuteButton() {
+  const muted = useSyncExternalStore(sound.subscribe, sound.isMuted, () => false);
   return (
-    <div className="language-switcher" title={t.language.label}>
-      <Globe size={16} aria-hidden />
-      <span className="language-current">{locale.nativeName}</span>
-      <ChevronDown size={14} aria-hidden />
-      <select
-        aria-label={t.language.choose}
-        value={locale.code}
-        onChange={(event) => {
-          window.location.pathname = `/${event.target.value}`;
-        }}
-      >
-        {locales.map((entry) => (
-          <option key={entry.code} value={entry.code} lang={entry.code}>
-            {entry.nativeName}
-          </option>
-        ))}
-      </select>
-    </div>
+    <button
+      type="button"
+      className={`mute-button ${muted ? "is-muted" : ""}`}
+      onClick={() => sound.setMuted(!muted)}
+      aria-pressed={muted}
+      aria-label={muted ? t.sound.unmute : t.sound.mute}
+      title={muted ? t.sound.unmute : t.sound.mute}
+      data-testid="mute-button"
+    >
+      <span aria-hidden>{muted ? "🔇" : "🔊"}</span>
+    </button>
   );
 }
 
-export function AnatomyApp({ locale, dictionary }: { locale: LocaleConfig; dictionary: Dictionary }) {
-  const t = dictionary.ui;
-  const organs = useMemo(() => buildOrgans(dictionary.organs), [dictionary.organs]);
-  const organById = useMemo(() => indexOrgans(organs), [organs]);
+const REDUCED_MOTION = "(prefers-reduced-motion: reduce)";
+function subscribeReducedMotion(onChange: () => void) {
+  const query = window.matchMedia(REDUCED_MOTION);
+  query.addEventListener("change", onChange);
+  return () => query.removeEventListener("change", onChange);
+}
 
+export function AnatomyApp() {
   const [organId, setOrganId] = useState<OrganId>("heart");
-  const [autoRotate, setAutoRotate] = useState(true);
-  const [compare, setCompare] = useState(false);
+  // The model spins on its own unless the device asks for less motion; the
+  // Rotate button overrides either way.
+  const reducedMotion = useSyncExternalStore(subscribeReducedMotion, () => window.matchMedia(REDUCED_MOTION).matches, () => false);
+  const [rotateChoice, setAutoRotate] = useState<boolean | null>(null);
+  const autoRotate = rotateChoice ?? !reducedMotion;
   const [modal, setModal] = useState<Modal>(null);
-  const [query, setQuery] = useState("");
-  const [mobileLibrary, setMobileLibrary] = useState(false);
-  const [quizActive, setQuizActive] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
   const prefetched = useRef(new Set<OrganId>());
   const organ = organById[organId];
-  const reference = organById[organId === "heart" ? "brain" : "heart"];
-  const filteredOrgans = useMemo(
-    () =>
-      organs.filter((item) =>
-        `${item.name} ${item.system}`.toLocaleLowerCase(locale.code).includes(query.toLocaleLowerCase(locale.code)),
-      ),
-    [organs, query, locale.code],
-  );
 
   useEffect(() => {
     if (!contentRef.current) return;
     gsap.fromTo(contentRef.current.querySelectorAll("[data-reveal]"),
-      { opacity: 0, y: 8 },
-      { opacity: 1, y: 0, duration: 0.48, stagger: 0.035, ease: "power2.out", overwrite: true },
+      { opacity: 0, y: 10 },
+      { opacity: 1, y: 0, duration: 0.5, stagger: 0.05, ease: "back.out(1.6)", overwrite: true },
     );
   }, [organId]);
 
+  // Nothing is downloaded before the child shows interest. The first touch
+  // anywhere pulls every organ's narration (~75 KB each) into the cache, so
+  // later taps speak immediately.
+  useEffect(() => {
+    const warm = () => sound.warm(organs.map((item) => narrationUrl(item.id)));
+    window.addEventListener("pointerdown", warm, { once: true });
+    return () => window.removeEventListener("pointerdown", warm);
+  }, []);
+
+  useEffect(() => {
+    sound.warm(organ.hotspots.map((hotspot) => narrationUrl(organ.id, hotspot.id)));
+  }, [organ]);
+
+  const sayOrgan = (id: OrganId) => sound.play(narrationUrl(id));
+  const sayHotspot = (hotspot: Hotspot) => sound.play(narrationUrl(hotspot.organId, hotspot.id));
+
   const selectOrgan = (id: OrganId) => {
     if (organById[id].illustrated) {
-      ["organ", "microscopic", "compare", "location"].forEach((asset) => {
+      ["organ", "location"].forEach((asset) => {
         const image = new Image();
-        image.src = `/anatomy/${id}/${asset}.webp`;
+        image.src = withBase(`/anatomy/${id}/${asset}.webp`);
       });
     }
     setOrganId(id);
-    setMobileLibrary(false);
-    setCompare(false);
-    setQuizActive(false);
+    sayOrgan(id);
   };
 
   // Warms the model in the HTTP cache while the pointer is still travelling,
@@ -172,35 +128,21 @@ export function AnatomyApp({ locale, dictionary }: { locale: LocaleConfig; dicti
   return (
     <main className="app-shell">
       <header className="topbar">
-        <button className="brand" type="button" onClick={() => selectOrgan("heart")} aria-label={t.brand.home}>
-          <strong>Anatomy Atelier<sup>✦</sup></strong>
-          <em>{t.brand.tagline}</em>
+        <button className="brand" type="button" onClick={() => setOrganId("heart")} aria-label={t.brand.home}>
+          <span className="brand-mark" aria-hidden><Heart size={26} fill="currentColor" /></span>
+          <span className="brand-text">
+            <strong>{t.brand.name}</strong>
+            <em>{t.brand.tagline}</em>
+          </span>
         </button>
-        <nav className="main-nav" aria-label="Primary navigation">
-          <button className="active"><Compass size={17} /> {t.nav.explore}</button>
-          <button><BrainCircuit size={17} /> {t.nav.systems}</button>
-          <button onClick={() => setModal("lesson")}><BookOpen size={17} /> {t.nav.lessons}</button>
-          <button><LibraryBig size={17} /> {t.nav.library}</button>
-          <button><NotebookPen size={17} /> {t.nav.notes}</button>
-        </nav>
-        <label className="search-box">
-          <Search size={17} />
-          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t.search.placeholder} />
-        </label>
-        <LanguageSwitcher locale={locale} t={t} />
-        <button className="profile" aria-label={t.profile.open}><span>MA</span><ChevronDown size={15} /></button>
-        <button className="mobile-library-trigger" onClick={() => setMobileLibrary(true)} aria-label={t.library.open}><LibraryBig size={20} /></button>
+        <MuteButton />
       </header>
 
       <div className="workspace">
-        <aside className={`organ-library ${mobileLibrary ? "open" : ""}`}>
-          <div className="panel-heading">
-            <span>{t.library.title}</span>
-            <button aria-label={t.library.close} className="mobile-close" onClick={() => setMobileLibrary(false)}><X size={17} /></button>
-            <button aria-label={t.library.saved}><Bookmark size={17} /></button>
-          </div>
+        <nav className="organ-library" aria-label={t.library.title}>
+          <h2 className="panel-heading">{t.library.title}</h2>
           <div className="organ-list">
-            {filteredOrgans.map((item) => (
+            {organs.map((item) => (
               <button
                 type="button"
                 key={item.id}
@@ -208,199 +150,124 @@ export function AnatomyApp({ locale, dictionary }: { locale: LocaleConfig; dicti
                 onClick={() => selectOrgan(item.id)}
                 onPointerEnter={() => prefetchOrgan(item.id)}
                 onFocus={() => prefetchOrgan(item.id)}
+                aria-pressed={organId === item.id}
+                aria-label={format(t.library.pick, { organ: item.name })}
                 style={{ "--item-accent": item.accent } as React.CSSProperties}
+                data-organ={item.id}
               >
                 <span className="organ-glyph">
-                  <OrganArt organ={item} asset="thumb" alt="" size={47} />
+                  <OrganArt organ={item} asset="thumb" size={64} />
                 </span>
-                <span><b>{item.name}</b><small>{item.system}</small></span>
-                {organId === item.id && <Heart className="favorite" size={14} fill="currentColor" />}
+                <b>{item.name}</b>
               </button>
             ))}
           </div>
-          <button className="view-all" onClick={() => setQuery("")}>{t.library.viewAll} <ArrowRight size={14} /></button>
-          <blockquote>
-            <Sparkles size={18} />
-            <p>{t.library.quoteLine1}<br />{t.library.quoteLine2}</p>
-            <em>{t.library.quoteSign}</em>
-          </blockquote>
-        </aside>
+        </nav>
 
         <OrganViewer
           organ={organ}
-          t={t}
           autoRotate={autoRotate}
           onAutoRotate={setAutoRotate}
-          compare={compare}
-          onCompare={() => setCompare(!compare)}
-          quizActive={quizActive}
-          onQuizExit={() => setQuizActive(false)}
+          onOrganTap={() => sayOrgan(organ.id)}
+          onHotspotTap={sayHotspot}
         />
 
-        <aside className="info-panel" ref={contentRef}>
-          <div className="info-kicker" data-reveal><Heart size={13} fill="currentColor" /> {format(t.info.kicker, { organ: organ.name })}</div>
+        <aside className="info-panel" ref={contentRef} aria-live="polite" style={{ "--organ-accent": organ.accent } as React.CSSProperties}>
           <div className="info-title-row" data-reveal>
-            <div><h1>{organ.name}</h1><em>{organ.poetic}</em></div>
-            <span className="specimen-stamp">
-              <OrganArt organ={organ} asset="organ" alt="" size={92} />
-            </span>
+            <button
+              type="button"
+              className="specimen-stamp"
+              onClick={() => sayOrgan(organ.id)}
+              aria-label={format(t.info.listen, { organ: organ.name })}
+            >
+              <OrganArt organ={organ} asset="organ" size={110} />
+            </button>
+            <div>
+              <h1>{organ.name}</h1>
+              <em>{organ.nickname}</em>
+            </div>
           </div>
-          <p className="description" data-reveal>{organ.description}</p>
-          <div className="rule" />
-          <h2 data-reveal>{t.info.keyFacts}</h2>
+          <p className="description" data-reveal>{organ.intro}</p>
+          <button type="button" className="listen-button" data-reveal onClick={() => sayOrgan(organ.id)}>
+            <Volume2 size={24} aria-hidden /> {t.sound.replay}
+          </button>
           <dl className="key-facts">
-            <div data-reveal><dt><span>◇</span> {t.info.size}</dt><dd><Measure>{organ.size}</Measure></dd></div>
-            <div data-reveal><dt><span>♙</span> {t.info.weight}</dt><dd><Measure>{organ.weight}</Measure></dd></div>
-            <div data-reveal><dt><span>⌁</span> {t.info.daily}</dt><dd><Measure>{organ.dailyFact}</Measure></dd></div>
-            <div data-reveal><dt><span>⌖</span> {t.info.location}</dt><dd><Measure>{organ.location}</Measure></dd></div>
-            <div data-reveal><dt><span>❋</span> {t.info.bloodSupply}</dt><dd><Measure>{organ.bloodSupply}</Measure></dd></div>
-            <div data-reveal><dt><span>◈</span> {t.info.function}</dt><dd><Measure>{organ.function}</Measure></dd></div>
+            <div data-reveal className="fact-where"><dt><span aria-hidden>📍</span>{t.info.where}</dt><dd>{organ.where}</dd></div>
+            <div data-reveal className="fact-size"><dt><span aria-hidden>📏</span>{t.info.size}</dt><dd>{organ.size}</dd></div>
+            <div data-reveal className="fact-job"><dt><span aria-hidden>💪</span>{t.info.job}</dt><dd>{organ.job}</dd></div>
+            <div data-reveal className="fact-daily"><dt><span aria-hidden>📅</span>{t.info.daily}</dt><dd>{organ.daily}</dd></div>
           </dl>
-          <div className="medical-note" data-reveal><Stethoscope size={16} /><p><b>{t.info.medical}</b>{organ.medical}</p></div>
-          <div className="fun-note" data-reveal><Sparkles size={15} /><p><b>{t.info.didYouKnow}</b>{organ.funFact}</p></div>
-          <button className="lesson-button" data-reveal onClick={() => setModal("lesson")}>{t.info.viewLesson} <ArrowRight size={16} /></button>
-          <div className="action-grid" data-reveal>
-            <button onClick={() => setModal("animation")}><Play size={15} /> {t.info.animate}</button>
-            <button onClick={() => { setQuizActive(true); setModal(null); }}><CircleHelp size={15} /> {t.info.quiz}</button>
-            <button onClick={() => setCompare(!compare)} className={compare ? "active" : ""}><Share2 size={15} /> {t.info.compare}</button>
+          <div className="fun-note" data-reveal>
+            <span aria-hidden>⭐</span>
+            <p><b>{t.info.funFact}</b>{organ.funFact}</p>
           </div>
         </aside>
       </div>
 
-      {compare && (
-        <section className="compare-strip" aria-label={t.compare.title}>
-          <div className="compare-organ"><OrganArt organ={organ} asset="thumb" alt="" /><span>{t.compare.comparing}</span><strong>{organ.name}</strong><small>{organ.system}</small></div>
-          <b>{t.compare.vs}</b>
-          <div className="compare-organ"><OrganArt organ={reference} asset="thumb" alt="" /><span>{t.compare.reference}</span><strong>{reference.name}</strong><small>{reference.system}</small></div>
-          <dl><div><dt>{t.compare.primaryRole}</dt><dd><Measure>{organ.function}</Measure></dd></div><div><dt>{t.compare.scale}</dt><dd><Measure>{organ.size}</Measure></dd></div></dl>
-          <button onClick={() => setCompare(false)} aria-label={t.compare.close}><X size={16} /></button>
-        </section>
-      )}
-
-      <section className="learning-cards" aria-label={format(t.cards.resources, { organ: organ.name })}>
-        <article className="curiosity-card">
-          <span>✿</span><p>{t.library.quoteLine1}<br />{t.library.quoteLine2}</p><em>{t.library.quoteSign}</em>
-        </article>
-        <article>
-          <header><div><em>{t.cards.microscopic}</em><h3>{organ.tissue}</h3></div><Microscope size={17} /></header>
-          <div className="microscope-visual organ-card-image"><OrganArt organ={organ} asset="microscopic" alt="" /></div>
-          <button onClick={() => setModal("lesson")}>{t.cards.exploreTissue} <ArrowRight size={14} /></button>
-        </article>
-        <article>
-          <header><div><em>{t.cards.compareOrgans}</em><h3>{organ.comparison}</h3></div><Share2 size={17} /></header>
-          <div className="comparison-visual organ-card-image"><OrganArt organ={organ} asset="compare" alt="" /></div>
-          <button onClick={() => setCompare(true)}>{t.cards.openComparison} <ArrowRight size={14} /></button>
-        </article>
-        <article>
-          <header><div><em>{t.cards.functionAnimation}</em><h3>{organ.function}</h3></div><Play size={17} /></header>
-          {/* The artwork itself is the control, so the play badge inside it is
-              decorative rather than a nested button. */}
-          <button
-            type="button"
-            className="function-visual organ-card-image"
-            onClick={() => setModal("animation")}
-            aria-label={format(t.cards.playAria, { organ: organ.name })}
-          >
-            <OrganArt organ={organ} asset="organ" alt="" />
+      <section className="learning-cards" aria-label={format(t.cards.label, { organ: organ.name })}>
+        <button
+          type="button"
+          className="picture-card system-card"
+          onClick={() => setModal("body")}
+          aria-label={format(t.cards.bodyAria, { organ: organ.name })}
+        >
+          <span className="picture-card-art"><OrganArt organ={organ} asset="location" /></span>
+          <span className="picture-card-label"><span aria-hidden>🧍</span> {t.cards.body}</span>
+        </button>
+        <button
+          type="button"
+          className="picture-card move-card"
+          onClick={() => setModal("move")}
+          aria-label={format(t.cards.moveAria, { organ: organ.name })}
+        >
+          <span className="picture-card-art function-visual">
+            <OrganArt organ={organ} asset="organ" />
             <i className="function-pulse" />
-            <span className="play-badge"><Play size={18} fill="currentColor" /></span>
-          </button>
-          <button onClick={() => setModal("animation")}>{t.cards.playAnimation} <ArrowRight size={14} /></button>
-        </article>
-        <article>
-          <header><div><em>{t.cards.clinicalNotes}</em><h3>{t.cards.commonConditions}</h3></div><FileText size={17} /></header>
-          <ul>{organ.conditions.map((condition) => <li key={condition}>{condition}</li>)}</ul>
-          <button onClick={() => setModal("lesson")}>{t.cards.seeAll} <ArrowRight size={14} /></button>
-        </article>
-        <article className="system-card">
-          <header><div><em>{t.cards.whereItWorks}</em><h3>{organ.system}</h3></div><BrainCircuit size={17} /></header>
-          <button
-            type="button"
-            className="system-visual organ-card-image"
-            onClick={() => setModal("system")}
-            aria-label={format(t.cards.systemAria, { organ: organ.name })}
-          >
-            <OrganArt organ={organ} asset="location" alt="" />
-          </button>
-          <button onClick={() => setModal("system")}>{t.cards.seeSystem} <ArrowRight size={14} /></button>
-        </article>
+            <span className="play-badge"><Play size={22} fill="currentColor" /></span>
+          </span>
+          <span className="picture-card-label"><span aria-hidden>▶️</span> {t.cards.move}</span>
+        </button>
       </section>
 
-      {modal && <LearningModal type={modal} organ={organ} t={t} onClose={() => setModal(null)} />}
-      {mobileLibrary && <button className="drawer-backdrop" aria-label={t.library.close} onClick={() => setMobileLibrary(false)} />}
+      {modal && <LearningModal type={modal} organ={organ} onClose={() => setModal(null)} />}
     </main>
   );
 }
 
-const MODAL_ICON: Record<Exclude<Modal, null>, string> = {
-  quiz: "?",
-  animation: "▶",
-  system: "⌖",
-  lesson: "✦",
-};
+function LearningModal({ type, organ, onClose }: { type: Exclude<Modal, null>; organ: Organ; onClose: () => void }) {
+  const vars = { organ: organ.name, where: organ.where };
+  const closeRef = useRef<HTMLButtonElement>(null);
 
-function LearningModal({
-  type,
-  organ,
-  t,
-  onClose,
-}: {
-  type: Exclude<Modal, null>;
-  organ: Organ;
-  t: UiDictionary;
-  onClose: () => void;
-}) {
-  const vars = { organ: organ.name, location: organ.location };
-  const title =
-    type === "quiz" ? format(t.modal.quizTitle, vars)
-    : type === "animation" ? format(t.modal.motionTitle, vars)
-    // Avoids gluing onto `system`, whose wording varies per organ, and stays
-    // grammatical for the plural organs too.
-    : type === "system" ? format(t.modal.bodyTitle, vars)
-    : format(t.modal.insideTitle, vars);
+  useEffect(() => {
+    closeRef.current?.focus();
+    const onKey = (event: KeyboardEvent) => event.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
 
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
       <section
-        className={`learning-modal ${type === "system" ? "wide" : ""}`}
+        className={`learning-modal ${type === "body" ? "wide" : ""}`}
         role="dialog"
         aria-modal="true"
         aria-labelledby="modal-title"
         onMouseDown={(event) => event.stopPropagation()}
       >
-        <button className="modal-close" onClick={onClose} aria-label={t.modal.close}><X size={18} /></button>
-        <span className="modal-icon">{MODAL_ICON[type]}</span>
-        <em>{t.modal.guided}</em>
-        <h2 id="modal-title">{title}</h2>
-        {type === "quiz" ? (
-          <div className="quiz-options">
-            <p>{format(t.modal.quizPrompt, vars)}</p>
-            <button onClick={onClose}>{t.modal.quizA}</button>
-            <button onClick={onClose}>{t.modal.quizB}</button>
-            <button onClick={onClose}>{t.modal.quizC}</button>
-          </div>
-        ) : type === "system" ? (
+        <button ref={closeRef} className="modal-close" onClick={onClose} aria-label={t.modal.close}><X size={24} /></button>
+        <h2 id="modal-title">{format(type === "body" ? t.modal.bodyTitle : t.modal.moveTitle, vars)}</h2>
+        {type === "body" ? (
           <>
-            <p>{format(t.modal.systemIntro, vars)}</p>
-            {/* Shown whole rather than cropped into the circular demo — the
-                point of this view is the figure and its vessels. */}
-            <figure className="modal-figure">
-              <OrganArt organ={organ} asset="location" alt="" />
-            </figure>
-            <dl className="modal-facts">
-              <div><dt>{t.modal.system}</dt><dd>{organ.system}</dd></div>
-              <div><dt>{t.modal.primaryRole}</dt><dd><Measure>{organ.function}</Measure></dd></div>
-              <div><dt>{t.modal.bloodSupply}</dt><dd><Measure>{organ.bloodSupply}</Measure></dd></div>
-            </dl>
-            <button className="lesson-button" onClick={onClose}>{t.modal.continueExploring} <ArrowRight size={16} /></button>
+            <p>{format(t.modal.bodyText, vars)}</p>
+            <figure className="modal-figure"><OrganArt organ={organ} asset="location" /></figure>
           </>
         ) : (
           <>
-            <p>{t.modal.lessonBody}</p>
-            <div className={`modal-demo ${type === "animation" ? "moving" : ""}`}><OrganArt organ={organ} asset="organ" alt="" /></div>
-            <button className="lesson-button" onClick={onClose}>{t.modal.continueExploring} <ArrowRight size={16} /></button>
+            <p>{format(t.modal.moveText, vars)}</p>
+            <div className="modal-demo moving"><OrganArt organ={organ} asset="organ" /></div>
           </>
         )}
+        <button className="lesson-button" onClick={onClose}>{t.modal.continue} <span aria-hidden>🎈</span></button>
       </section>
     </div>
   );
