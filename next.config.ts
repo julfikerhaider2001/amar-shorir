@@ -1,14 +1,19 @@
 import type { NextConfig } from "next";
-import { defaultLocale } from "./app/i18n/config";
+
+/**
+ * GitHub Pages serves plain files from `https://<user>.github.io/<repo>/`, so
+ * that build is a static export under a base path. Other targets (Vercel,
+ * vinext/Cloudflare) keep the default server build at the domain root.
+ */
+const pages = process.env.GITHUB_PAGES === "1";
+const basePath = pages ? `/${process.env.PAGES_REPO ?? "anatomy"}` : "";
 
 const nextConfig: NextConfig = {
-  // Every route lives under /[locale], so `app/[locale]/layout.tsx` is the root
-  // layout and there is no page at `/`. Send bare visits to the default
-  // language. (Accept-Language negotiation would need middleware, which the
-  // Cloudflare/vinext target does not run — the in-app switcher covers it.)
-  async redirects() {
-    return [{ source: "/", destination: `/${defaultLocale}`, permanent: false }];
-  },
+  ...(pages && { output: "export", trailingSlash: true }),
+  basePath,
+  // Exposed to client code so raw asset URLs (models, images, audio) can be
+  // prefixed — Next only rewrites its own `_next` URLs.
+  env: { NEXT_PUBLIC_BASE_PATH: basePath },
 };
 
 export default nextConfig;
