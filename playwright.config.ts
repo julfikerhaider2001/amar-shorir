@@ -2,10 +2,11 @@ import { defineConfig, devices } from "@playwright/test";
 
 /**
  * Runs against the GitHub Pages build (`npm run build:pages`), served from
- * `/anatomy/` exactly as Pages will — so base-path mistakes fail here, not in
+ * `/<repo>/` exactly as Pages will — so base-path mistakes fail here, not in
  * production.
  */
 const PORT = 4173;
+const BASE = `/${process.env.PAGES_REPO ?? "amar-shorir"}/`;
 
 export default defineConfig({
   testDir: "./tests",
@@ -16,7 +17,7 @@ export default defineConfig({
   retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? [["list"], ["html", { open: "never" }]] : "list",
   use: {
-    baseURL: `http://localhost:${PORT}/anatomy/`,
+    baseURL: `http://localhost:${PORT}${BASE}`,
     trace: "on-first-retry",
     // Headless browsers draw WebGL on the CPU. With reduced motion the model
     // does not auto-spin, so the viewer only redraws when something changes
@@ -36,7 +37,7 @@ export default defineConfig({
   ],
   webServer: {
     command: "node scripts/serve-pages.mjs",
-    url: `http://localhost:${PORT}/anatomy/`,
+    url: `http://localhost:${PORT}${BASE}`,
     env: { PORT: String(PORT) },
     reuseExistingServer: !process.env.CI,
   },

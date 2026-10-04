@@ -4,7 +4,7 @@ An interactive 3D anatomy app for children aged about 4–10, entirely in Bangla
 Tap an organ to hear its name and a fun fact read aloud; tap the coloured dots
 on the 3D model to hear about each part.
 
-Live: https://thebuggeddev.github.io/anatomy/
+Live: https://julfikerhaider2001.github.io/amar-shorir/
 
 ## Run it
 
@@ -13,7 +13,7 @@ Requires Node.js ≥ 22.13.
 ```bash
 npm install
 npm run dev:next        # http://localhost:3000 (plain Next.js dev server)
-npm run preview         # build the GitHub Pages version and serve it at http://localhost:4173/anatomy/
+npm run preview         # build the GitHub Pages version and serve it at http://localhost:4173/amar-shorir/
 ```
 
 `npm run dev` / `npm run build` still use vinext (the original Cloudflare target).
@@ -75,11 +75,11 @@ audio file, nothing to license.
 
 ```bash
 npm run lint
-npm run build:pages     # static export to out/ with base path /anatomy
+npm run build:pages     # static export to out/ with base path /amar-shorir
 npm test                # Playwright: desktop, phone (375×667), tablet (820×1180)
 ```
 
-The tests run against the built site under `/anatomy/`, exactly like Pages. First
+The tests run against the built site under `/amar-shorir/`, exactly like Pages. First
 run: `npx playwright install chromium`.
 
 ## Deploy

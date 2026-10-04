@@ -3,7 +3,7 @@
  * `/<repo>/` subpath, `index.html` for directories, and `404.html` for
  * anything missing. Used by `npm run preview` and the Playwright tests.
  *
- *   PORT=4173 PAGES_REPO=anatomy node scripts/serve-pages.mjs
+ *   PORT=4173 PAGES_REPO=amar-shorir node scripts/serve-pages.mjs
  */
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
@@ -12,7 +12,7 @@ import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const outDir = fileURLToPath(new URL("../out/", import.meta.url));
-const base = `/${process.env.PAGES_REPO ?? "anatomy"}`;
+const base = `/${process.env.PAGES_REPO ?? "amar-shorir"}`;
 const port = Number(process.env.PORT ?? 4173);
 
 const types = {

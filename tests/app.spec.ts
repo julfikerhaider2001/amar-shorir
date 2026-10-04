@@ -40,6 +40,10 @@ async function press(target: Locator, touch: boolean) {
 }
 
 const LATIN = /[A-Za-z]/;
+/** The Pages subpath, e.g. "/amar-shorir" — matches next.config.ts. */
+const BASE = `/${process.env.PAGES_REPO ?? "amar-shorir"}`;
+/** Matches a narration URL under the base path; `path` is a regex fragment. */
+const clip = (path: string) => new RegExp(`${BASE}/audio/${path}$`);
 
 test.beforeEach(async ({ page }) => {
   await spyOnAudio(page);
@@ -71,13 +75,13 @@ test("shows Bangla numerals, not ASCII digits", async ({ page }) => {
 test("choosing an organ shows its Bangla info and plays its narration", async ({ page }, testInfo) => {
   const touch = !!testInfo.project.use.hasTouch;
   await page.goto("./");
-  const narration = page.waitForResponse((response) => response.url().endsWith("/anatomy/audio/brain.mp3"));
+  const narration = page.waitForResponse((response) => response.url().endsWith(`${BASE}/audio/brain.mp3`));
 
   await press(page.locator('[data-organ="brain"]'), touch);
 
   await expect(page.getByRole("heading", { level: 1 })).toHaveText(bn.organs.brain.name);
   await expect(page.getByText(bn.organs.brain.funFact)).toBeVisible();
-  await expect.poll(() => plays(page)).toEqual([expect.objectContaining({ src: expect.stringMatching(/\/anatomy\/audio\/brain\.mp3$/) })]);
+  await expect.poll(() => plays(page)).toEqual([expect.objectContaining({ src: expect.stringMatching(clip("brain\\.mp3")) })]);
   expect((await narration).status()).toBe(200);
 });
 
@@ -96,7 +100,7 @@ test("tapping the 3D model plays a narration", async ({ page }, testInfo) => {
 
   // The centre is the organ itself, or one of its dots — either speaks.
   await expect.poll(() => plays(page)).toEqual([
-    expect.objectContaining({ src: expect.stringMatching(/\/anatomy\/audio\/heart(\.mp3|\/[a-z-]+\.mp3)$/) }),
+    expect.objectContaining({ src: expect.stringMatching(clip("heart(\\.mp3|/[a-z-]+\\.mp3)")) }),
   ]);
 });
 
@@ -104,7 +108,7 @@ test("each labelled spot has its own narration", async ({ page }) => {
   await page.goto("./");
   // The screen-reader list mirrors the dots and runs the same handler.
   await page.locator(".hotspot-index button").first().evaluate((button: HTMLButtonElement) => button.click());
-  await expect.poll(() => plays(page)).toEqual([expect.objectContaining({ src: expect.stringMatching(/\/anatomy\/audio\/heart\/aorta\.mp3$/) })]);
+  await expect.poll(() => plays(page)).toEqual([expect.objectContaining({ src: expect.stringMatching(clip("heart/aorta\\.mp3")) })]);
 });
 
 test("a new tap stops the previous narration — sounds never overlap", async ({ page }, testInfo) => {
@@ -189,5 +193,5 @@ test("unknown pages show a friendly Bangla 404", async ({ page }) => {
   const response = await page.goto("./does-not-exist/");
   expect(response?.status()).toBe(404);
   await expect(page.getByRole("heading")).toHaveText(bn.notFound.title);
-  await expect(page.getByRole("link", { name: bn.notFound.back })).toHaveAttribute("href", "/anatomy/");
+  await expect(page.getByRole("link", { name: bn.notFound.back })).toHaveAttribute("href", `${BASE}/`);
 });

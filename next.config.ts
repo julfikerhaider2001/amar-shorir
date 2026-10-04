@@ -6,7 +6,7 @@ import type { NextConfig } from "next";
  * vinext/Cloudflare) keep the default server build at the domain root.
  */
 const pages = process.env.GITHUB_PAGES === "1";
-const basePath = pages ? `/${process.env.PAGES_REPO ?? "anatomy"}` : "";
+const basePath = pages ? `/${process.env.PAGES_REPO ?? "amar-shorir"}` : "";
 
 const nextConfig: NextConfig = {
   ...(pages && { output: "export", trailingSlash: true }),
