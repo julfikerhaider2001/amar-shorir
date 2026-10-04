@@ -17,6 +17,10 @@ const eslintConfig = defineConfig([
     "public/**",
     "test-results/**",
     "playwright-report/**",
+    // Generated native projects (Capacitor copies the built site into them).
+    "android/**",
+    "ios/**",
+    "release/**",
   ]),
 ]);
 

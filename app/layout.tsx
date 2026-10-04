@@ -25,6 +25,8 @@ export const metadata: Metadata = {
   title: t.meta.title,
   description: t.meta.description,
   applicationName: t.brand.name,
+  // "Add to Home Screen" on iPhone/iPad opens full screen, like an app.
+  appleWebApp: { capable: true, title: t.brand.name, statusBarStyle: "default" },
   alternates: { canonical: withBase("/") },
   icons: {
     icon: [
@@ -46,7 +48,8 @@ export const metadata: Metadata = {
   twitter: { card: "summary_large_image", title: t.meta.title, description: t.meta.description, images: [image] },
 };
 
-export const viewport: Viewport = { themeColor: "#fff4d6", width: "device-width", initialScale: 1 };
+// `cover` lets the phone apps draw under the notch; globals.css pads for it.
+export const viewport: Viewport = { themeColor: "#fff4d6", width: "device-width", initialScale: 1, viewportFit: "cover" };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (

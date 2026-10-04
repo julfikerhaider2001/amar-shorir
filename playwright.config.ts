@@ -23,6 +23,9 @@ export default defineConfig({
     // does not auto-spin, so the viewer only redraws when something changes
     // and parallel workers do not starve each other.
     reducedMotion: "reduce",
+    // The offline service worker would answer from its cache and hide the
+    // requests these tests watch.
+    serviceWorkers: "block",
   },
   projects: [
     { name: "desktop", use: { ...devices["Desktop Chrome"], viewport: { width: 1440, height: 900 } } },

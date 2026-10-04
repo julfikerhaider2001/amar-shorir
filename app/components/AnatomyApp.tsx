@@ -1,49 +1,22 @@
 "use client";
 
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import gsap from "gsap";
-import { Heart, Play, Volume2, X } from "lucide-react";
+import { Heart, Play, Volume2 } from "lucide-react";
+import { App as NativeApp } from "@capacitor/app";
+import { Capacitor } from "@capacitor/core";
+import { Dialog } from "./Dialog";
+import { OrganArt } from "./OrganArt";
 import { OrganViewer } from "./OrganViewer";
+import { Quiz, makeQuiz, type QuizRound } from "./Quiz";
+import { VoiceButton, VoicePicker } from "./VoicePicker";
 import type { OrganId } from "../lib/anatomy-data";
 import { format, organById, organs, t, type Hotspot, type Organ } from "../i18n";
-import { narrationUrl, withBase } from "../lib/paths";
+import { clips } from "../lib/clips";
+import { withBase } from "../lib/paths";
 import { sound } from "../lib/sound";
 
-type Modal = "body" | "move" | null;
-
-/**
- * Renders an organ illustration, or its accent glyph for organs that ship as a
- * 3D model without the painted asset set. Keeps every image slot filled instead
- * of leaving a broken `<img>` behind.
- */
-function OrganArt({
-  organ,
-  asset,
-  size,
-}: {
-  organ: Organ;
-  asset: "thumb" | "organ" | "location";
-  size?: number;
-}) {
-  if (!organ.illustrated) {
-    return (
-      <span className="art-fallback" style={{ "--art-accent": organ.accent } as React.CSSProperties} aria-hidden>
-        {organ.icon}
-      </span>
-    );
-  }
-  return (
-    <img
-      key={`${organ.id}-${asset}`}
-      src={withBase(`/anatomy/${organ.id}/${asset}.webp`)}
-      alt=""
-      width={size}
-      height={size}
-      loading={asset === "thumb" ? "eager" : "lazy"}
-      decoding="async"
-    />
-  );
-}
+type Modal = "body" | "move" | "voice" | null;
 
 /** 🔊 / 🔇 — the choice is kept in localStorage by `sound`. */
 function MuteButton() {
@@ -51,7 +24,7 @@ function MuteButton() {
   return (
     <button
       type="button"
-      className={`mute-button ${muted ? "is-muted" : ""}`}
+      className={`round-button mute-button ${muted ? "is-muted" : ""}`}
       onClick={() => sound.setMuted(!muted)}
       aria-pressed={muted}
       aria-label={muted ? t.sound.unmute : t.sound.mute}
@@ -78,6 +51,8 @@ export function AnatomyApp() {
   const [rotateChoice, setAutoRotate] = useState<boolean | null>(null);
   const autoRotate = rotateChoice ?? !reducedMotion;
   const [modal, setModal] = useState<Modal>(null);
+  const [quiz, setQuiz] = useState<{ run: number; rounds: QuizRound[] } | null>(null);
+  const voice = useSyncExternalStore(sound.subscribe, sound.getVoice, () => "");
   const contentRef = useRef<HTMLDivElement>(null);
   const prefetched = useRef(new Set<OrganId>());
   const organ = organById[organId];
@@ -93,18 +68,54 @@ export function AnatomyApp() {
   // Nothing is downloaded before the child shows interest. The first touch
   // anywhere pulls every organ's narration (~75 KB each) into the cache, so
   // later taps speak immediately.
+  // Re-runs when the voice changes, so the new voice is warmed too.
   useEffect(() => {
-    const warm = () => sound.warm(organs.map((item) => narrationUrl(item.id)));
+    if (!voice) return;
+    const warm = () => sound.warm(organs.map((item) => clips.organ(item.id)));
     window.addEventListener("pointerdown", warm, { once: true });
     return () => window.removeEventListener("pointerdown", warm);
-  }, []);
+  }, [voice]);
 
   useEffect(() => {
-    sound.warm(organ.hotspots.map((hotspot) => narrationUrl(organ.id, hotspot.id)));
-  }, [organ]);
+    if (!voice) return;
+    sound.warm(organ.hotspots.map((hotspot) => clips.hotspot(organ.id, hotspot.id)));
+  }, [organ, voice]);
 
-  const sayOrgan = (id: OrganId) => sound.play(narrationUrl(id));
-  const sayHotspot = (hotspot: Hotspot) => sound.play(narrationUrl(hotspot.organId, hotspot.id));
+  // Offline support for the website. The phone apps already carry every file.
+  useEffect(() => {
+    if (Capacitor.isNativePlatform() || process.env.NODE_ENV !== "production" || !("serviceWorker" in navigator)) return;
+    void navigator.serviceWorker.register(withBase("/sw.js"), { scope: withBase("/") }).catch(() => {});
+  }, []);
+
+  const closeModal = useCallback(() => setModal(null), []);
+  const closeQuiz = useCallback(() => {
+    sound.stop();
+    setQuiz(null);
+  }, []);
+
+  // Android's back button closes a pop-up first, and only then leaves the app.
+  const backRef = useRef<() => void>(() => {});
+  useEffect(() => {
+    backRef.current = () => {
+      if (quiz) closeQuiz();
+      else if (modal) closeModal();
+      else void NativeApp.exitApp();
+    };
+  });
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+    const listener = NativeApp.addListener("backButton", () => backRef.current());
+    return () => void listener.then((handle) => handle.remove());
+  }, []);
+
+  const sayOrgan = (id: OrganId) => sound.play(clips.organ(id));
+  const sayHotspot = (hotspot: Hotspot) => sound.play(clips.hotspot(hotspot.organId, hotspot.id));
+
+  const startQuiz = () => {
+    const rounds = makeQuiz();
+    setQuiz((current) => ({ run: (current?.run ?? 0) + 1, rounds }));
+    sound.play(clips.quizAsk(rounds[0].target));
+  };
 
   const selectOrgan = (id: OrganId) => {
     if (organById[id].illustrated) {
@@ -135,7 +146,10 @@ export function AnatomyApp() {
             <em>{t.brand.tagline}</em>
           </span>
         </button>
-        <MuteButton />
+        <div className="topbar-actions">
+          <VoiceButton onOpen={() => setModal("voice")} />
+          <MuteButton />
+        </div>
       </header>
 
       <div className="workspace">
@@ -205,6 +219,15 @@ export function AnatomyApp() {
       </div>
 
       <section className="learning-cards" aria-label={format(t.cards.label, { organ: organ.name })}>
+        <button type="button" className="picture-card quiz-card" onClick={startQuiz} aria-label={t.quiz.cardAria} data-testid="quiz-start">
+          <span className="picture-card-art quiz-card-art" aria-hidden>
+            {["heart", "brain", "lungs"].map((id) => (
+              <span key={id} className="quiz-card-thumb"><OrganArt organ={organById[id as OrganId]} asset="thumb" size={96} /></span>
+            ))}
+            <span className="quiz-card-target">🎯</span>
+          </span>
+          <span className="picture-card-label"><span aria-hidden>🎮</span> {t.quiz.card}</span>
+        </button>
         <button
           type="button"
           className="picture-card system-card"
@@ -229,46 +252,34 @@ export function AnatomyApp() {
         </button>
       </section>
 
-      {modal && <LearningModal type={modal} organ={organ} onClose={() => setModal(null)} />}
+      {(modal === "body" || modal === "move") && <LearningModal type={modal} organ={organ} onClose={closeModal} />}
+      {modal === "voice" && <VoicePicker onClose={closeModal} />}
+      {quiz && <Quiz key={quiz.run} rounds={quiz.rounds} onRestart={startQuiz} onClose={closeQuiz} />}
     </main>
   );
 }
 
-function LearningModal({ type, organ, onClose }: { type: Exclude<Modal, null>; organ: Organ; onClose: () => void }) {
+function LearningModal({ type, organ, onClose }: { type: "body" | "move"; organ: Organ; onClose: () => void }) {
   const vars = { organ: organ.name, where: organ.where };
-  const closeRef = useRef<HTMLButtonElement>(null);
-
-  useEffect(() => {
-    closeRef.current?.focus();
-    const onKey = (event: KeyboardEvent) => event.key === "Escape" && onClose();
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
   return (
-    <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
-      <section
-        className={`learning-modal ${type === "body" ? "wide" : ""}`}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="modal-title"
-        onMouseDown={(event) => event.stopPropagation()}
-      >
-        <button ref={closeRef} className="modal-close" onClick={onClose} aria-label={t.modal.close}><X size={24} /></button>
-        <h2 id="modal-title">{format(type === "body" ? t.modal.bodyTitle : t.modal.moveTitle, vars)}</h2>
-        {type === "body" ? (
-          <>
-            <p>{format(t.modal.bodyText, vars)}</p>
-            <figure className="modal-figure"><OrganArt organ={organ} asset="location" /></figure>
-          </>
-        ) : (
-          <>
-            <p>{format(t.modal.moveText, vars)}</p>
-            <div className="modal-demo moving"><OrganArt organ={organ} asset="organ" /></div>
-          </>
-        )}
-        <button className="lesson-button" onClick={onClose}>{t.modal.continue} <span aria-hidden>🎈</span></button>
-      </section>
-    </div>
+    <Dialog
+      title={format(type === "body" ? t.modal.bodyTitle : t.modal.moveTitle, vars)}
+      closeLabel={t.modal.close}
+      onClose={onClose}
+      className={type === "body" ? "wide" : ""}
+    >
+      {type === "body" ? (
+        <>
+          <p>{format(t.modal.bodyText, vars)}</p>
+          <figure className="modal-figure"><OrganArt organ={organ} asset="location" /></figure>
+        </>
+      ) : (
+        <>
+          <p>{format(t.modal.moveText, vars)}</p>
+          <div className="modal-demo moving"><OrganArt organ={organ} asset="organ" /></div>
+        </>
+      )}
+      <button type="button" className="lesson-button" onClick={onClose}>{t.modal.continue} <span aria-hidden>🎈</span></button>
+    </Dialog>
   );
 }

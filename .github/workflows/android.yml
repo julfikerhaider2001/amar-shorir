@@ -1,0 +1,41 @@
+name: Build Android APK
+
+# Builds the installable app on every push to main (or by hand from the
+# Actions tab). Download it from the run's "Artifacts" section.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - run: npm ci
+
+      - name: Build the app's web files and copy them into android/
+        run: npm run build:app
+
+      - name: Assemble APK
+        run: node scripts/build-apk.mjs
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: amar-shorir-apk
+          path: release/amar-shorir.apk
+          retention-days: 30

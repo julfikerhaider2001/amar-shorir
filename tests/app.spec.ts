@@ -1,5 +1,6 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import bn from "../app/i18n/bn.json" with { type: "json" };
+import voiceData from "../app/lib/voices.json" with { type: "json" };
 
 /**
  * Records every HTMLMediaElement.play()/pause() so tests can assert on what
@@ -8,7 +9,7 @@ import bn from "../app/i18n/bn.json" with { type: "json" };
  */
 async function spyOnAudio(page: Page) {
   await page.addInitScript(() => {
-    type Spy = { plays: { src: string; el: number }[]; pauses: number };
+    type Spy = { plays: { src: string; el: number; rate: number }[]; pauses: number };
     const spy: Spy = { plays: [], pauses: 0 };
     (window as unknown as { __audio: Spy }).__audio = spy;
     const ids = new WeakMap<HTMLMediaElement, number>();
@@ -19,7 +20,7 @@ async function spyOnAudio(page: Page) {
     };
     const play = HTMLMediaElement.prototype.play;
     HTMLMediaElement.prototype.play = function (this: HTMLMediaElement) {
-      spy.plays.push({ src: this.src, el: idOf(this) });
+      spy.plays.push({ src: this.src, el: idOf(this), rate: this.playbackRate });
       return play.call(this).catch(() => {});
     };
     const pause = HTMLMediaElement.prototype.pause;
@@ -31,7 +32,7 @@ async function spyOnAudio(page: Page) {
 }
 
 const plays = (page: Page) =>
-  page.evaluate(() => (window as unknown as { __audio: { plays: { src: string; el: number }[] } }).__audio.plays);
+  page.evaluate(() => (window as unknown as { __audio: { plays: { src: string; el: number; rate: number }[] } }).__audio.plays);
 
 /** Tap on touch projects, click elsewhere — exercises the real input path. */
 async function press(target: Locator, touch: boolean) {
@@ -43,7 +44,7 @@ const LATIN = /[A-Za-z]/;
 /** The Pages subpath, e.g. "/amar-shorir" — matches next.config.ts. */
 const BASE = `/${process.env.PAGES_REPO ?? "amar-shorir"}`;
 /** Matches a narration URL under the base path; `path` is a regex fragment. */
-const clip = (path: string) => new RegExp(`${BASE}/audio/${path}$`);
+const clip = (path: string, voice = voiceData.default) => new RegExp(`${BASE}/audio/${voice}/${path}$`);
 
 test.beforeEach(async ({ page }) => {
   await spyOnAudio(page);
@@ -75,7 +76,7 @@ test("shows Bangla numerals, not ASCII digits", async ({ page }) => {
 test("choosing an organ shows its Bangla info and plays its narration", async ({ page }, testInfo) => {
   const touch = !!testInfo.project.use.hasTouch;
   await page.goto("./");
-  const narration = page.waitForResponse((response) => response.url().endsWith(`${BASE}/audio/brain.mp3`));
+  const narration = page.waitForResponse((response) => response.url().endsWith(`${BASE}/audio/${voiceData.default}/brain.mp3`));
 
   await press(page.locator('[data-organ="brain"]'), touch);
 
@@ -149,6 +150,74 @@ test("mute silences narration and survives a reload", async ({ page }, testInfo)
   await expect.poll(async () => (await plays(page)).length).toBe(1);
 });
 
+test("the voice picker switches narrator and remembers it", async ({ page }, testInfo) => {
+  const touch = !!testInfo.project.use.hasTouch;
+  await page.goto("./");
+  await press(page.getByTestId("voice-button"), touch);
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await expect(page.getByRole("radio", { checked: true }).first()).toHaveAttribute("data-voice", voiceData.default);
+
+  // Choosing a voice lets it introduce itself.
+  await press(page.locator('[data-voice="dadu"]'), touch);
+  await expect(page.locator('[data-voice="dadu"]')).toHaveAttribute("aria-checked", "true");
+  await expect.poll(() => plays(page)).toEqual([expect.objectContaining({ src: expect.stringMatching(clip("hello\\.mp3", "dadu")) })]);
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toBeHidden();
+
+  // Narration now uses that voice, also after a reload.
+  await press(page.locator('[data-organ="lungs"]'), touch);
+  await expect.poll(async () => (await plays(page)).at(-1)?.src).toMatch(clip("lungs\\.mp3", "dadu"));
+  await page.reload();
+  await press(page.locator('[data-organ="liver"]'), touch);
+  await expect.poll(async () => (await plays(page)).at(-1)?.src).toMatch(clip("liver\\.mp3", "dadu"));
+});
+
+test("slow mode plays narration slower", async ({ page }, testInfo) => {
+  const touch = !!testInfo.project.use.hasTouch;
+  await page.goto("./");
+  await press(page.getByTestId("voice-button"), touch);
+  await press(page.getByTestId("slow-button"), touch);
+  await expect(page.getByTestId("slow-button")).toHaveAttribute("aria-checked", "true");
+  await page.keyboard.press("Escape");
+  await press(page.locator('[data-organ="brain"]'), touch);
+  await expect.poll(async () => (await plays(page)).at(-1)).toEqual(
+    expect.objectContaining({ src: expect.stringMatching(clip("brain\\.mp3")), rate: expect.any(Number) }),
+  );
+  expect((await plays(page)).at(-1)!.rate).toBeLessThan(1);
+});
+
+test("the find-the-organ game asks, cheers and keeps score", async ({ page }, testInfo) => {
+  const touch = !!testInfo.project.use.hasTouch;
+  const names = Object.fromEntries(Object.entries(bn.organs).map(([id, organ]) => [organ.name, id]));
+  await page.goto("./");
+  await press(page.getByTestId("quiz-start"), touch);
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible();
+
+  for (let round = 0; round < 5; round += 1) {
+    const question = (await dialog.locator(".quiz-question span").innerText()).trim();
+    const target = Object.entries(names).find(([name]) => question.startsWith(name))?.[1];
+    expect(target, question).toBeTruthy();
+    await expect.poll(async () => (await plays(page)).at(-1)?.src).toMatch(clip(`quiz/${target}\\.mp3`));
+
+    if (round === 0) {
+      // A wrong answer is gently corrected and costs the star.
+      const wrongOption = dialog.locator(`.quiz-option:not([data-organ="${target}"])`).first();
+      await press(wrongOption, touch);
+      await expect(wrongOption).toHaveClass(/is-wrong/);
+      await expect.poll(async () => (await plays(page)).at(-1)?.src).toMatch(clip("quiz/wrong\\.mp3"));
+    }
+    await press(dialog.locator(`.quiz-option[data-organ="${target}"]`), touch);
+    await expect(dialog.locator(`.quiz-option[data-organ="${target}"]`)).toHaveClass(/is-right/);
+    await expect.poll(async () => (await plays(page)).at(-1)?.src).toMatch(clip("quiz/right-\\d\\.mp3"));
+    await press(page.getByTestId("quiz-next"), touch);
+  }
+
+  await expect(page.getByTestId("quiz-score")).toHaveText(bn.quiz.score.replace("{total}", "৫").replace("{score}", "৪"));
+  await expect.poll(async () => (await plays(page)).at(-1)?.src).toMatch(clip("quiz/done\\.mp3"));
+  expect(await dialog.innerText()).not.toMatch(LATIN);
+});
+
 test("layout fits the screen with big touch targets", async ({ page }) => {
   await page.goto("./");
   await expect(page.locator(".viewer-shell")).toBeVisible();
@@ -157,7 +226,7 @@ test("layout fits the screen with big touch targets", async ({ page }) => {
   expect(overflow).toBeLessThanOrEqual(0);
 
   const viewport = page.viewportSize()!;
-  for (const selector of [".mute-button", ".three-mount canvas", ".tool-button", ".organ-item"]) {
+  for (const selector of [".mute-button", ".voice-button", ".three-mount canvas", ".tool-button", ".organ-item", ".quiz-card"]) {
     const box = (await page.locator(selector).first().boundingBox())!;
     expect(box.x, selector).toBeGreaterThanOrEqual(0);
     expect(box.x + box.width, selector).toBeLessThanOrEqual(viewport.width);

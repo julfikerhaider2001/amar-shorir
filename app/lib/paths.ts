@@ -9,8 +9,8 @@ export function withBase(path: string) {
   return `${basePath}${path}`;
 }
 
-/** Narration for an organ, or for one labelled spot on it. Written by
- *  `scripts/generate-audio.mjs`. */
-export function narrationUrl(organId: string, hotspotId?: string) {
-  return withBase(hotspotId ? `/audio/${organId}/${hotspotId}.mp3` : `/audio/${organId}.mp3`);
+/** One narration clip spoken by one voice. Clip names come from `clips.ts`;
+ *  the files are written by `scripts/generate-audio.mjs`. */
+export function clipUrl(voice: string, clip: string) {
+  return withBase(`/audio/${voice}/${clip}`);
 }

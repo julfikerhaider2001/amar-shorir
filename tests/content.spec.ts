@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { expect, test } from "@playwright/test";
 import bn from "../app/i18n/bn.json" with { type: "json" };
 import { organStructures } from "../app/lib/anatomy-data";
+import voiceData from "../app/lib/voices.json" with { type: "json" };
 
 /** Checks bn.json against the 3D data and the generated audio. No browser. */
 
@@ -34,11 +35,15 @@ test.describe("bn.json", () => {
     }
   });
 
-  test("has a narration clip for every organ and spot", () => {
-    for (const organ of organStructures) {
-      expect(existsSync(audio(`${organ.id}.mp3`)), `${organ.id}.mp3 — run npm run audio`).toBe(true);
-      for (const hotspot of organ.hotspots) {
-        expect(existsSync(audio(`${organ.id}/${hotspot.id}.mp3`)), `${organ.id}/${hotspot.id}.mp3 — run npm run audio`).toBe(true);
+  test("has every narration clip in every voice", () => {
+    for (const { id: voice } of voiceData.voices) {
+      expect((bn.voices as Record<string, unknown>)[voice], `bn.json voices.${voice}`).toBeDefined();
+      const files = ["hello.mp3", "quiz/wrong.mp3", "quiz/done.mp3", ...bn.quiz.right.map((_, i) => `quiz/right-${i + 1}.mp3`)];
+      for (const organ of organStructures) {
+        files.push(`${organ.id}.mp3`, `quiz/${organ.id}.mp3`, ...organ.hotspots.map((hotspot) => `${organ.id}/${hotspot.id}.mp3`));
+      }
+      for (const file of files) {
+        expect(existsSync(audio(`${voice}/${file}`)), `${voice}/${file} — run npm run audio`).toBe(true);
       }
     }
   });

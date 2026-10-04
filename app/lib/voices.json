@@ -1,0 +1,11 @@
+{
+  "default": "apu",
+  "voices": [
+    { "id": "apu", "icon": "👩", "voice": "bn-BD-NabanitaNeural", "rate": "-12%", "pitch": "+4%" },
+    { "id": "bhaiya", "icon": "👨", "voice": "bn-BD-PradeepNeural", "rate": "-12%", "pitch": "+0%" },
+    { "id": "didi", "icon": "👧", "voice": "bn-IN-TanishaaNeural", "rate": "-12%", "pitch": "+2%" },
+    { "id": "dada", "icon": "👦", "voice": "bn-IN-BashkarNeural", "rate": "-12%", "pitch": "+0%" },
+    { "id": "putul", "icon": "🧸", "voice": "bn-BD-NabanitaNeural", "rate": "-10%", "pitch": "+28%" },
+    { "id": "dadu", "icon": "👴", "voice": "bn-BD-PradeepNeural", "rate": "-22%", "pitch": "-16%" }
+  ]
+}

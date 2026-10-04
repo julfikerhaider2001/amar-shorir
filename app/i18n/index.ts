@@ -1,4 +1,5 @@
 import bn from "./bn.json";
+import voiceData from "../lib/voices.json";
 import { organStructures, type HotspotStructure, type OrganId, type OrganStructure } from "../lib/anatomy-data";
 
 /** Every word the app shows lives in `bn.json`. Components read it through
@@ -18,7 +19,7 @@ export type OrganContent = {
   hotspots: Record<string, { label: string; detail: string }>;
 };
 
-type Strings = Omit<typeof bn, "organs">;
+type Strings = Omit<typeof bn, "organs" | "voices">;
 
 // Assigning here (rather than casting) makes TypeScript check that the JSON
 // has every organ and every field.
@@ -56,3 +57,11 @@ const BANGLA_DIGITS = "০১২৩৪৫৬৭৮৯";
 export function toBanglaDigits(value: number | string) {
   return String(value).replace(/[0-9]/g, (digit) => BANGLA_DIGITS[Number(digit)]);
 }
+
+export type VoiceOption = (typeof voiceData.voices)[number] & { name: string; about: string };
+
+/** Voices in picker order, with their Bangla names from bn.json. */
+export const voiceOptions: VoiceOption[] = voiceData.voices.map((voice) => ({
+  ...voice,
+  ...(bn.voices as Record<string, { name: string; about: string }>)[voice.id],
+}));
