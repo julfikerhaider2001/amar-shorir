@@ -4,7 +4,7 @@ An interactive 3D anatomy app for children aged about 4–10, entirely in Bangla
 Tap an organ to hear its name and a fun fact read aloud; tap the coloured dots
 on the 3D model to hear about each part.
 
-- **6 narrators** (🗣️ button, top right): আপু, ভাইয়া, দিদি, দাদা, পুতুল, দাদু —
+- **4 narrators, all with a Bangladeshi accent** (🗣️ button, top right): আপু, ভাইয়া, পুতুল, দাদু —
   each introduces itself when tapped. A 🐢 slow mode reads more slowly.
 - **Game** (🎮 খেলি!): "where is the heart?" — the question is spoken, the
   answers are pictures, so children who can't read yet can play. Five rounds,
@@ -66,9 +66,10 @@ writes, for every voice in [`app/lib/voices.json`](app/lib/voices.json):
 
 It uses Microsoft Edge's online neural TTS (the same service as the Python
 `edge-tts` package) through the `msedge-tts` npm package, so it needs an
-internet connection but no API key or Python. There are four Bangla neural
-voices (two Bangladeshi, two Indian); পুতুল and দাদু are the Bangladeshi ones
-with the pitch and speed changed. To add a narrator: add it to `voices.json`,
+internet connection but no API key or Python. Only Bangladeshi-accent voices
+are used: the service has two (`bn-BD-NabanitaNeural` → আপু, `bn-BD-PradeepNeural`
+→ ভাইয়া), and পুতুল and দাদু are the same two with the pitch and speed changed.
+The `bn-IN` (Kolkata) voices are deliberately left out. To add a narrator: add it to `voices.json`,
 add its name, description and `hello` line under `voices` in `bn.json`, run
 `npm run audio`.
 

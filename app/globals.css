@@ -405,7 +405,7 @@ h1, h2, h3, .brand strong, .organ-item b, .tool-button span, .listen-button, .le
 
 /* ---------------------------------------------------------------- voice picker */
 
-.voice-grid { margin: 14px 0 6px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.voice-grid { margin: 14px 0 6px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .voice-card {
   display: flex;
   flex-direction: column;
